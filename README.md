@@ -14,3 +14,4 @@ HTML format, so it easily can be browsed with links to files included in emails.
 <h4>Example walkthrough: </h4>
 <code> Insert exerpt from runtime </code>
 
+Running the parser will generate an email index at <code>MailArchive/index.html</code> and a calendar overview at <code>MailArchive/calendar.html</code> styled similarly for easy browsing.

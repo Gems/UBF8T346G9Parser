@@ -1,7 +1,15 @@
 import pathlib
 import shutil
 from datetime import datetime
-from typing import Dict
+import html
+from typing import Dict, List, Optional
+
+# Archiver configuration constants
+STYLESHEET_PATH = "./static/css/custom.css"
+UNIX_Y2K_EPOCH = 946684800  # Unix timestamp for 2000-01-01 (used to spot Mac absolute times)
+MAC_EPOCH_OFFSET = 978307200  # Seconds between Unix epoch and Mac absolute time (2001-01-01)
+MILLISECOND_TIMESTAMP_THRESHOLD = 1e12  # Values above this are assumed to be millisecond timestamps
+MESSAGE_ENCODING = 'utf-16-le'
 
 from src.helpers import helpers #type: ignore
 from src.logger import config_logger #type: ignore
@@ -20,6 +28,8 @@ class MailArchiver(config_logger.Logger):
         self.mailsdir = 'MailArchive/Mails'
         self._check_mailsdir(self.mailsdir)
         self.mails_info = {}
+        self.calendar_entries: List[Dict] = []
+        self.stylesheet_path = STYLESHEET_PATH
 
     def archive_mail(self, mail: Dict, message: bytes) -> None:
         mail_times = self._get_date(mail)
@@ -31,10 +41,8 @@ class MailArchiver(config_logger.Logger):
         self.logger.info('Updating index')
         index_location = 'MailArchive/index.html'
 
-
-        html_start = '<head>\n<link rel="stylesheet" href="./static/css/custom.css">\n</head>\n'
-        html_title = '<h2>\nEmails found by the UBF8T346G9 Parser\n</h2>\n'
-        html_end = '</body>\n</html>\n'
+        html_start, html_title, html_end = self._get_html_wrapper(
+            'Emails found by the UBF8T346G9 Parser')
         html_year = '<details>\n<summary>{year}</summary>\n{months}\n</details>\n'
         html_month = '<details>\n<summary>{month}</summary>\n{days}\n</details>\n'
         html_day = '<details>\n<summary>{day}</summary>\n{topics}\n</details>\n'
@@ -71,6 +79,122 @@ class MailArchiver(config_logger.Logger):
         with open(index_location, 'w') as f:
             f.write(index_content)
 
+    def archive_calendar_entry(self, calendar_entry: Dict, message: bytes) -> None:
+        try:
+            content = message.decode(MESSAGE_ENCODING, 'ignore')
+        except (UnicodeDecodeError, LookupError):
+            content = ''
+
+        self.calendar_entries.append({
+            'id': calendar_entry.get('id'),
+            'subject': calendar_entry.get('subject') or 'No subject',
+            'location': calendar_entry.get('location') or 'No location',
+            'organizer': calendar_entry.get('organizer') or 'Unknown organizer',
+            'attendees': calendar_entry.get('attendees') or [],
+            'start': self._get_event_datetime(calendar_entry.get('start')),
+            'end': self._get_event_datetime(calendar_entry.get('end')),
+            'raw_start': calendar_entry.get('start'),
+            'raw_end': calendar_entry.get('end'),
+            'content': content
+        })
+
+    def update_calendar(self) -> None:
+        if not self.calendar_entries:
+            self.logger.info('No calendar entries found, skipping calendar.html generation')
+            return
+
+        calendar_location = 'MailArchive/calendar.html'
+        pathlib.Path(calendar_location).parent.mkdir(parents=True, exist_ok=True)
+
+        html_start, html_title, html_end = self._get_html_wrapper(
+            'Calendar entries found by the UBF8T346G9 Parser')
+
+        calendar_entries = sorted(self.calendar_entries, key=self._calendar_sort_key)
+        rendered_entries = [self._render_calendar_entry(entry) for entry in calendar_entries]
+
+        with open(calendar_location, 'w') as f:
+            f.write(html_start + html_title + ''.join(rendered_entries) + html_end)
+
+    def _get_html_wrapper(self, title: str):
+        html_start = (
+            '<!DOCTYPE html>\n'
+            '<html>\n'
+            '<head>\n'
+            f'<link rel="stylesheet" href="{self.stylesheet_path}">\n'
+            '</head>\n'
+            '<body>\n'
+        )
+        html_title = f'<h2>\n{title}\n</h2>\n'
+        html_end = '</body>\n</html>\n'
+        return html_start, html_title, html_end
+
+    def _render_calendar_entry(self, entry: Dict) -> str:
+        attendees = entry.get('attendees') or []
+        attendees_text = ' | '.join([html.escape(attendee) for attendee in attendees]) if attendees else 'None'
+
+        meta_data = (
+            "\n<div class=\"bordermeta\">\n"
+            "<p>\nSubject: <b>{subject}</b>\n</p>\n"
+            "<p>\nOrganizer: {organizer}\n</p>\n"
+            "<p>\nLocation: {location}\n</p>\n"
+            "<p>\nAttendees: {attendees}\n</p>\n"
+            "<p>\nStart: {start}\n</p>\n"
+            "<p>\nEnd: {end}\n</p>\n"
+            "</div>\n"
+        )
+
+        meta_data = meta_data.format(
+            subject=html.escape(entry.get('subject') or ''),
+            organizer=html.escape(entry.get('organizer') or ''),
+            location=html.escape(entry.get('location') or ''),
+            attendees=attendees_text,
+            start=self._format_event_datetime(entry.get('start'), entry.get('raw_start')),
+            end=self._format_event_datetime(entry.get('end'), entry.get('raw_end')),
+        )
+
+        safe_content = html.escape(entry.get('content') or '')
+        return meta_data + '\n<div class="bordermail">\n' + safe_content + '\n</div>\n<hr>\n'
+
+    def _calendar_sort_key(self, entry: Dict):
+        datetime_value = entry.get('start')
+        if isinstance(datetime_value, datetime):
+            return datetime_value
+        return datetime.min
+
+    def _get_event_datetime(self, value: Optional[object]) -> Optional[datetime]:
+        """Normalize event timestamps from Outlook data.
+
+        Handles millisecond-based Unix timestamps as well as Mac absolute time
+        values (seconds since 2001-01-01) by converting them into standard Unix
+        timestamps for display. Timestamps earlier than UNIX_Y2K_EPOCH are
+        treated as Mac absolute time.
+        """
+        try:
+            timestamp = float(value)
+        except (TypeError, ValueError):
+            return None
+
+        if timestamp > MILLISECOND_TIMESTAMP_THRESHOLD:
+            # Convert millisecond epoch values to seconds.
+            timestamp = timestamp / 1000
+        elif timestamp < UNIX_Y2K_EPOCH:
+            # Adjust Mac absolute time (seconds since 2001-01-01) to Unix epoch.
+            adjusted_timestamp = timestamp + MAC_EPOCH_OFFSET
+            if adjusted_timestamp > UNIX_Y2K_EPOCH:
+                timestamp = adjusted_timestamp
+
+        try:
+            return datetime.fromtimestamp(timestamp)
+        except (OverflowError, OSError, ValueError):
+            return None
+
+    def _format_event_datetime(self, datetime_value: Optional[datetime], raw_value: Optional[object]) -> str:
+        if isinstance(datetime_value, datetime):
+            return datetime_value.strftime("%Y-%m-%d %H:%M:%S")
+        if raw_value is None:
+            return 'Unknown'
+        return html.escape(str(raw_value))
+
     def _update_mails_info(self, mail, mail_times):
         year = mail_times.get('year')
         month = mail_times.get('month')
@@ -106,7 +230,7 @@ class MailArchiver(config_logger.Logger):
             f.write('<head>\n<link rel="stylesheet" href="../../../../static/css/custom.css">\n</head>\n')
             self._write_meta_data(mail, f)
             f.write('\n<div class="bordermail">\n')
-            f.write(message.decode('utf-16-le','ignore'))
+            f.write(message.decode(MESSAGE_ENCODING,'ignore'))
             f.write('\n</div>\n')
 
     def _write_meta_data(self, mail: Dict, mail_file):
@@ -194,4 +318,3 @@ class MailArchiver(config_logger.Logger):
             else:
                 self.logger.info(f'Removing {mails_dir}')
                 shutil.rmtree(mails_dir)
-

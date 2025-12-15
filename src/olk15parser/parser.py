@@ -6,7 +6,13 @@ class OLK15Parser(config_logger.Logger):
     """
 
     def get_mail_content(self, olk15message_location: str, subject: str) -> bytes:
+        """Backward compatible wrapper around get_content for mail items."""
+        return self.get_content(olk15message_location, subject)
 
+    def get_content(self, olk15message_location: str, subject: str) -> bytes:
+        return self._read_and_slice(olk15message_location, subject)
+
+    def _read_and_slice(self, olk15message_location: str, subject: str) -> bytes:
         with open(olk15message_location, 'rb') as mail_file:
             message = mail_file.read()
             sliced_message = self._slice_message(message, subject)
@@ -50,4 +56,3 @@ class OLK15Parser(config_logger.Logger):
 
         self.logger.debug('[LastIndex] default -1')
         return -1
-
