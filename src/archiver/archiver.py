@@ -201,7 +201,6 @@ class CalendarArchiver(config_logger.Logger):
 
     def __init__(self) -> None:
         self.calendar_location = pathlib.Path('MailArchive/calendar.html')
-        self.calendar_location.parent.mkdir(parents=True, exist_ok=True)
 
     def archive_calendar(self, events: List[Dict]) -> None:
         if not events:
@@ -235,6 +234,8 @@ class CalendarArchiver(config_logger.Logger):
             html.append(self._render_event(event))
         if sorted_events:
             html.append('</div>\n')
+
+        self.calendar_location.parent.mkdir(parents=True, exist_ok=True)
 
         with self.calendar_location.open('w') as f:
             f.writelines(html)

@@ -1,6 +1,7 @@
 #!/usr/bin/env python
 import argparse
 import logging
+from datetime import datetime, date
 
 from src.backupreader import reader
 from src.olk15parser import parser
@@ -44,6 +45,11 @@ def _parse_args():
         '--calendar-folders',
         default=None,
         help='Comma-separated FolderID list for calendar export; skips prompt when provided'
+    )
+    parser_cli.add_argument(
+        '--future-only',
+        action='store_true',
+        help='Exclude events that end before today (filters out events ending yesterday or earlier)'
     )
     return parser_cli.parse_args()
 
@@ -89,6 +95,26 @@ def _select_calendar_folders(backupreader_app, quiet: bool, provided_ids=None):
         return None
     return chosen
 
+def _filter_future(events, cutoff: datetime):
+    def to_dt(value):
+        if value is None:
+            return None
+        if isinstance(value, datetime):
+            return value.replace(tzinfo=None)
+        if isinstance(value, date):
+            return datetime.combine(value, datetime.min.time())
+        try:
+            return datetime.fromtimestamp(float(value))
+        except Exception:
+            return None
+
+    filtered = []
+    for e in events:
+        end = to_dt(e.get('end')) or to_dt(e.get('start'))
+        if end is None or end >= cutoff:
+            filtered.append(e)
+    return filtered
+
 
 def run():
     args = _parse_args()
@@ -124,6 +150,9 @@ def run():
         provided_ids = _parse_folder_ids(args.calendar_folders) if args.calendar_folders else None
         folder_ids = _select_calendar_folders(backupreader_app, args.quiet, provided_ids)
         calendar_entries = backupreader_app.get_calendar_entries(folder_ids=folder_ids)
+        if args.future_only:
+            cutoff = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
+            calendar_entries = _filter_future(calendar_entries, cutoff)
         if args.ics_output is None:
             calendar_archiver.archive_calendar(calendar_entries)
         else:
