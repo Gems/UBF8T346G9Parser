@@ -281,6 +281,13 @@ class CalendarArchiver(config_logger.Logger):
                 import re
                 body_text = re.sub(r'\n{3,}', '\n\n', body_text)
                 vevent.add('description', body_text)
+            # Add HTML alternative description as single-line text/html
+            alt_html = (event.get('description') or '').strip()
+            if alt_html:
+                import re
+                alt_html = alt_html.replace('\r\n', ' ').replace('\r', ' ').replace('\n', ' ')
+                alt_html = re.sub(r'\s{2,}', ' ', alt_html).strip()
+                vevent.add('X-ALT-DESC', alt_html, parameters={'FMTTYPE': 'text/html'})
             if event.get('location'):
                 vevent.add('location', event.get('location'))
             if event.get('organizer'):
