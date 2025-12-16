@@ -1,6 +1,6 @@
 import pathlib
 import shutil
-from datetime import datetime
+from datetime import datetime, date
 from typing import Dict, List, Optional
 
 from src.helpers import helpers #type: ignore
@@ -239,6 +239,67 @@ class CalendarArchiver(config_logger.Logger):
         with self.calendar_location.open('w') as f:
             f.writelines(html)
 
+    def export_ics(self, events: List[Dict], output_path: str) -> None:
+        try:
+            import icalendar
+        except ImportError:
+            self.logger.warning('icalendar package not installed; skipping ICS export')
+            return
+
+        if not events:
+            self.logger.warning('No calendar entries found; skipping ICS export')
+            return
+
+        events_sorted = sorted(events, key=lambda e: self._to_timestamp(e.get('start')), reverse=True)
+
+        output = pathlib.Path(output_path)
+        output.parent.mkdir(parents=True, exist_ok=True)
+
+        cal = icalendar.Calendar()
+        cal.add('prodid', '-//UBF8T346G9 Parser//ICS Export//EN')
+        cal.add('version', '2.0')
+
+        for event in events_sorted:
+            dt_start = self._coerce_to_datetime(event.get('start'))
+            dt_end = self._coerce_to_datetime(event.get('end'))
+            if not dt_start or not dt_end:
+                continue
+
+            vevent = icalendar.Event()
+            vevent.add('uid', event.get('uid') or str(event.get('id') or id(event)))
+            vevent.add('dtstart', dt_start.date() if event.get('all_day') else dt_start)
+            vevent.add('dtend', dt_end.date() if event.get('all_day') else dt_end)
+            if event.get('subject'):
+                vevent.add('summary', event.get('subject'))
+            body_text = self._strip_tags((event.get('description') or '').strip()) or ''
+            if body_text:
+                # Normalize to single-line with escaped newlines
+                import html
+                body_text = html.unescape(body_text).strip()
+                # Keep actual newline characters; icalendar will escape them as \n (single slash)
+                body_text = body_text.replace('\r\n', '\n').replace('\r', '\n')
+                import re
+                body_text = re.sub(r'\n{3,}', '\n\n', body_text)
+                vevent.add('description', body_text)
+            if event.get('location'):
+                vevent.add('location', event.get('location'))
+            if event.get('organizer'):
+                email = self._first_email(event.get('organizer'))
+                if email:
+                    vevent.add('organizer', f'mailto:{email}')
+            if event.get('attendees'):
+                for att in event.get('attendees'):
+                    email = self._first_email(att)
+                    if email:
+                        vevent.add('attendee', f'mailto:{email}', parameters={'cn': att.split("<")[0].strip() or email})
+            if event.get('online_join_link'):
+                vevent.add('url', event.get('online_join_link'))
+            cal.add_component(vevent)
+
+        with output.open('wb') as f:
+            f.write(cal.to_ical())
+        self.logger.info(f'Wrote ICS calendar to {output}')
+
     def _render_event(self, event: Dict) -> str:
         raw_body = self._read_body(event.get('content_path'))
         subject = event.get('subject') or self._extract_subject(raw_body) or event.get('fallback_subject') or 'Untitled event'
@@ -249,19 +310,35 @@ class CalendarArchiver(config_logger.Logger):
         attendees_list = event.get('attendees') or emails_in_body[1:] or []
         attendees = ', '.join(attendees_list) or 'No attendees listed'
         description = event.get('description') or ''
-        body = raw_body or description
+        body = (raw_body or description).strip()
 
-        return (
-            '<div class="bordermeta">\n'
-            f'<p><b>{subject}</b></p>\n'
-            f'<p>Organizer: {organizer}</p>\n'
-            f'<p>When: {self._format_time_range(event.get("start"), event.get("end"))}</p>\n'
-            f'<p>Location: {location}</p>\n'
-            f'<p>Attendees: {attendees}</p>\n'
-            f'<p>Event ID: {event.get("id")}</p>\n'
-            '</div>\n'
-            f'<div class="bordermail">\n{body}\n</div>\n'
-        )
+        all_day = 'Yes' if event.get('all_day') else 'No'
+        busy_status = event.get('busy_status') or 'Unspecified'
+        is_recurring = 'Yes' if event.get('is_recurring') else 'No'
+        is_cancelled = 'Yes' if event.get('is_cancelled') else 'No'
+        attendee_count = event.get('attendee_count')
+        attendee_count_text = attendee_count if attendee_count is not None else 'Unknown'
+        online_link = event.get('online_join_link')
+        calendar_owner = event.get('calendar_owner') or 'Unknown'
+        uid = event.get('uid') or 'Unknown'
+
+        meta_parts = [
+            '<div class="bordermeta">\n',
+            f'<p><b>{subject}</b></p>\n',
+            f'<p>Organizer: {organizer}</p>\n',
+            f'<p>When: {self._format_time_range(event.get("start"), event.get("end"))}</p>\n',
+            f'<p>Location: {location}</p>\n',
+            f'<p>Attendees: {attendees}</p>\n',
+            f'<p>All day: {all_day} | Busy status: {busy_status} | Recurring: {is_recurring} | Cancelled: {is_cancelled}</p>\n',
+            f'<p>Attendee count: {attendee_count_text} | Calendar owner: {calendar_owner}</p>\n',
+            f'<p>UID: {uid}</p>\n',
+        ]
+        if online_link:
+            meta_parts.append(f"<p>Online link: <a href='{online_link}'>{online_link}</a></p>\n")
+        meta_parts.append(f'<p>Event ID: {event.get("id")}</p>\n')
+        meta_parts.append('</div>\n')
+
+        return ''.join(meta_parts) + f'<div class="bordermail">\n{body}\n</div>\n'
 
     def _format_time_range(self, start: Optional[object], end: Optional[object]) -> str:
         start_text = self._format_datetime(start) or 'Unknown start'
@@ -333,9 +410,21 @@ class CalendarArchiver(config_logger.Logger):
         text = self._strip_tags(body).strip()
         return text.splitlines()[0][:120].strip() if text else None
 
+    def _extract_emails(self, body: str) -> List[str]:
+        if not body:
+            return []
+        import re
+        emails = re.findall(r'[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,}', body)
+        seen = set()
+        deduped = []
+        for e in emails:
+            if e not in seen:
+                seen.add(e)
+                deduped.append(e)
     def _strip_tags(self, html: str) -> str:
         import re
         return re.sub(r'<[^>]+>', '', html)
+
 
     def _extract_emails(self, body: str) -> List[str]:
         if not body:
@@ -349,6 +438,13 @@ class CalendarArchiver(config_logger.Logger):
                 seen.add(e)
                 deduped.append(e)
         return deduped
+
+    def _first_email(self, text: Optional[str]) -> Optional[str]:
+        if not text:
+            return None
+        import re
+        match = re.search(r'[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,}', text)
+        return match.group(0) if match else None
 
     def _coerce_to_datetime(self, value: object) -> datetime:
         """Normalize datetime/date/timestamp-like values to datetime."""

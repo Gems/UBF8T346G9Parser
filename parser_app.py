@@ -26,6 +26,20 @@ def _parse_args():
         default='INFO',
         help='Set log verbosity (default: INFO)'
     )
+    parser_cli.add_argument(
+        '--ics-output',
+        nargs='?',
+        const='',
+        default=None,
+        help=('If provided, output calendar as ICS instead of HTML. '
+              'Use no value for default path (MailArchive/calendar.ics) or provide a custom path. '
+              'Omit this flag to generate calendar.html.')
+    )
+    parser_cli.add_argument(
+        '-q', '--quiet',
+        action='store_true',
+        help='Use default backup/profile paths without prompting'
+    )
     return parser_cli.parse_args()
 
 
@@ -33,7 +47,7 @@ def run():
     args = _parse_args()
     config_logger.set_log_level(getattr(logging, args.log_level))
 
-    profile_data_location = helpers.Helper.get_location()
+    profile_data_location = helpers.Helper.get_location(non_interactive=args.quiet)
     backupreader_app = reader.BackupReader(profile_data_location)
     olk15parser_app = parser.OLK15Parser()
     mail_archiver = archiver.MailArchiver()
@@ -61,7 +75,11 @@ def run():
     if args.mode in ('all', 'calendar'):
         logger.logger.info('Reading calendar entries')
         calendar_entries = backupreader_app.get_calendar_entries()
-        calendar_archiver.archive_calendar(calendar_entries)
+        if args.ics_output is None:
+            calendar_archiver.archive_calendar(calendar_entries)
+        else:
+            ics_path = args.ics_output or 'MailArchive/calendar.ics'
+            calendar_archiver.export_ics(calendar_entries, ics_path)
 
 
 if __name__ == "__main__":

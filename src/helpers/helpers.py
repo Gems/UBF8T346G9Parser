@@ -16,8 +16,10 @@ class Helper(config_logger.Logger):
         return location
 
     @staticmethod
-    def _get_backup_location():
+    def _get_backup_location(non_interactive: bool=False):
         default = './UBF8T346G9.Office/'
+        if non_interactive:
+            return default
         userinput = input(
             f'Please provide backup folder location [Default: {default}]: ')
         if userinput:
@@ -25,9 +27,11 @@ class Helper(config_logger.Logger):
         return default
 
     @staticmethod
-    def _get_profile_data():
+    def _get_profile_data(non_interactive: bool=False):
         static_path = 'Outlook/Outlook 15 Profiles/{}/Data/'
         default = 'Main Profile'
+        if non_interactive:
+            return static_path.format(default)
         userinput = input(
             f'Please provide user profile [Default: {default}]: ')
         if userinput:
@@ -35,8 +39,8 @@ class Helper(config_logger.Logger):
         return static_path.format(default)
 
     @classmethod
-    def get_location(cls) -> str:
-        return cls._get_backup_location() + cls._get_profile_data()
+    def get_location(cls, non_interactive: bool=False) -> str:
+        return cls._get_backup_location(non_interactive) + cls._get_profile_data(non_interactive)
 
     @staticmethod
     def open_file(filename):
@@ -44,4 +48,3 @@ class Helper(config_logger.Logger):
         if path.is_file:
             return path.open('a')
         return path.open('w')
-
