@@ -48,8 +48,9 @@ class BackupReader(config_logger.Logger):
     def db_location(self):
         sqlitedb = 'Outlook.sqlite'
         try:
+            base_path = pathlib.Path(self.profile_data_location)
             return helpers.Helper.test_location(
-                self.profile_data_location + sqlitedb, 'file')
+                str(base_path / sqlitedb), 'file')
         except FileNotFoundError:
             self.logger.warning(f'Missing {sqlitedb}, is the database missing?')
             raise FileNotFoundError

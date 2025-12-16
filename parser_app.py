@@ -42,6 +42,11 @@ def _parse_args():
         help='Use default backup/profile paths without prompting'
     )
     parser_cli.add_argument(
+        '--outlook-path',
+        default=None,
+        help='Custom path to Outlook data folder (overrides prompt/default); implies --quiet for location'
+    )
+    parser_cli.add_argument(
         '--calendar-folders',
         default=None,
         help='Comma-separated FolderID list for calendar export; skips prompt when provided'
@@ -120,7 +125,9 @@ def run():
     args = _parse_args()
     config_logger.set_log_level(getattr(logging, args.log_level))
 
-    profile_data_location = helpers.Helper.get_location(non_interactive=args.quiet)
+    profile_data_location = args.outlook_path or helpers.Helper.get_location(non_interactive=args.quiet)
+    if not profile_data_location.endswith('/'):
+        profile_data_location += '/'
     backupreader_app = reader.BackupReader(profile_data_location)
     olk15parser_app = parser.OLK15Parser()
     mail_archiver = archiver.MailArchiver()

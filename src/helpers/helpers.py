@@ -40,7 +40,10 @@ class Helper(config_logger.Logger):
 
     @classmethod
     def get_location(cls, non_interactive: bool=False) -> str:
-        return cls._get_backup_location(non_interactive) + cls._get_profile_data(non_interactive)
+        path = cls._get_backup_location(non_interactive) + cls._get_profile_data(non_interactive)
+        if not path.endswith('/'):
+            path += '/'
+        return path
 
     @staticmethod
     def open_file(filename):
