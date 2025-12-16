@@ -1,7 +1,7 @@
 import pathlib
 import shutil
 from datetime import datetime
-from typing import Dict
+from typing import Dict, List, Optional
 
 from src.helpers import helpers #type: ignore
 from src.logger import config_logger #type: ignore
@@ -195,3 +195,181 @@ class MailArchiver(config_logger.Logger):
                 self.logger.info(f'Removing {mails_dir}')
                 shutil.rmtree(mails_dir)
 
+
+class CalendarArchiver(config_logger.Logger):
+    """Render calendar entries into an HTML page."""
+
+    def __init__(self) -> None:
+        self.calendar_location = pathlib.Path('MailArchive/calendar.html')
+        self.calendar_location.parent.mkdir(parents=True, exist_ok=True)
+
+    def archive_calendar(self, events: List[Dict]) -> None:
+        if not events:
+            self.logger.warning('No calendar entries found; skipping calendar.html generation')
+            return
+
+        self.logger.info('Writing calendar entries to calendar.html')
+        sorted_events = sorted(events, key=lambda e: self._to_timestamp(e.get('start')), reverse=True)
+
+        self.logger.debug(
+            'Calendar entries discovered: count=%s unique_days=%s examples=%s',
+            len(sorted_events),
+            len({self._format_day(e.get('start')) for e in sorted_events}),
+            [self._event_summary(e) for e in sorted_events[:3]]
+        )
+
+        html: List[str] = []
+        html.append('<head>\n<link rel="stylesheet" href="./static/css/custom.css">\n</head>\n')
+        html.append('<h2>Calendar entries found by the UBF8T346G9 Parser</h2>\n')
+
+        current_day = None
+        for event in sorted_events:
+            day_label = self._format_day(event.get('start'))
+            if day_label != current_day:
+                if current_day is not None:
+                    html.append('</div>\n')
+                current_day = day_label
+                html.append(f'<div class="bordermeta">\n<p><b>{day_label}</b></p>\n</div>\n')
+                html.append('<div class="bordermail">\n')
+
+            html.append(self._render_event(event))
+        if sorted_events:
+            html.append('</div>\n')
+
+        with self.calendar_location.open('w') as f:
+            f.writelines(html)
+
+    def _render_event(self, event: Dict) -> str:
+        raw_body = self._read_body(event.get('content_path'))
+        subject = event.get('subject') or self._extract_subject(raw_body) or event.get('fallback_subject') or 'Untitled event'
+        location = event.get('location') or 'Unspecified location'
+
+        emails_in_body = self._extract_emails(raw_body)
+        organizer = event.get('organizer') or (emails_in_body[0] if emails_in_body else None) or 'Unknown organizer'
+        attendees_list = event.get('attendees') or emails_in_body[1:] or []
+        attendees = ', '.join(attendees_list) or 'No attendees listed'
+        description = event.get('description') or ''
+        body = raw_body or description
+
+        return (
+            '<div class="bordermeta">\n'
+            f'<p><b>{subject}</b></p>\n'
+            f'<p>Organizer: {organizer}</p>\n'
+            f'<p>When: {self._format_time_range(event.get("start"), event.get("end"))}</p>\n'
+            f'<p>Location: {location}</p>\n'
+            f'<p>Attendees: {attendees}</p>\n'
+            f'<p>Event ID: {event.get("id")}</p>\n'
+            '</div>\n'
+            f'<div class="bordermail">\n{body}\n</div>\n'
+        )
+
+    def _format_time_range(self, start: Optional[object], end: Optional[object]) -> str:
+        start_text = self._format_datetime(start) or 'Unknown start'
+        end_text = self._format_datetime(end) or 'Unknown end'
+        if start_text and end_text:
+            return f'{start_text} — {end_text}'
+        return start_text or end_text
+
+    def _format_day(self, value: Optional[object]) -> str:
+        formatted = self._format_datetime(value, day_only=True)
+        return formatted or 'Unknown date'
+
+    def _format_datetime(self, value: Optional[object], day_only: bool=False) -> Optional[str]:
+        if value is None:
+            return None
+        try:
+            dt = self._coerce_to_datetime(value)
+        except Exception:
+            try:
+                dt = datetime.fromisoformat(str(value))
+            except Exception:
+                return str(value)
+
+        if day_only:
+            return dt.strftime('%Y-%m-%d')
+        return dt.strftime('%Y-%m-%d %H:%M:%S')
+
+    def _read_body(self, content_path: Optional[str]) -> str:
+        if not content_path:
+            return ''
+
+        try:
+            with open(content_path, 'rb') as f:
+                raw = f.read()
+                try:
+                    return raw.decode('utf-16-le', 'ignore')
+                except Exception:
+                    return raw.decode('utf-8', 'ignore')
+        except FileNotFoundError:
+            self.logger.debug(f'Missing calendar content file: {content_path}')
+            return ''
+
+    def _event_summary(self, event: Dict) -> str:
+        return '{subject} ({time}) @ {location}'.format(
+            subject=event.get('subject') or 'Untitled',
+            time=self._format_time_range(event.get('start'), event.get('end')),
+            location=event.get('location') or 'n/a'
+        )
+
+    def _extract_subject(self, body: str) -> Optional[str]:
+        if not body:
+            return None
+        lowered = body.lower()
+        start = lowered.find('<title>')
+        if start != -1:
+            end = lowered.find('</title>', start)
+            if end != -1:
+                return body[start+7:end].strip()
+
+        # Headings or bold text as fallback
+        for marker in ['<h1', '<h2', '<h3', 'font-weight:700', 'font-weight:bold']:
+            idx = lowered.find(marker)
+            if idx != -1:
+                segment = body[idx:idx+200]
+                text = self._strip_tags(segment)
+                if text:
+                    return text[:120].strip()
+        # Fallback: first line of text
+        text = self._strip_tags(body).strip()
+        return text.splitlines()[0][:120].strip() if text else None
+
+    def _strip_tags(self, html: str) -> str:
+        import re
+        return re.sub(r'<[^>]+>', '', html)
+
+    def _extract_emails(self, body: str) -> List[str]:
+        if not body:
+            return []
+        import re
+        emails = re.findall(r'[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,}', body)
+        seen = set()
+        deduped = []
+        for e in emails:
+            if e not in seen:
+                seen.add(e)
+                deduped.append(e)
+        return deduped
+
+    def _coerce_to_datetime(self, value: object) -> datetime:
+        """Normalize datetime/date/timestamp-like values to datetime."""
+        if isinstance(value, datetime):
+            return value
+        if isinstance(value, date):
+            # treat all-day dates as midnight
+            return datetime.combine(value, datetime.min.time())
+        # Numeric timestamp
+        ts = float(value)
+        dt = datetime.fromtimestamp(ts)
+        # If timestamp looks off, try interpreting as minutes since 1601-01-01.
+        if dt.year < 1980 or dt.year > 2100:
+            dt = datetime.fromtimestamp(ts * 60 - 11644473600)
+        return dt
+
+    def _to_timestamp(self, value: Optional[object]) -> float:
+        if value is None:
+            return 0.0
+        try:
+            dt = self._coerce_to_datetime(value)
+            return dt.timestamp()
+        except Exception:
+            return 0.0
