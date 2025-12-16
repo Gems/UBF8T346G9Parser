@@ -254,6 +254,9 @@ class BackupReader(config_logger.Logger):
         attendees = []
         for a in getattr(event, 'Attendees', []):
             attendees.append(f"{a.Name} <{a.Address}>")
+        content_path_raw = getattr(event, 'PathToDataFile', None)
+        # Prefer the already-parsed Body from pyolk; do not fall back to raw OLK file to avoid gibberish.
+        content_path = None
         return {
             'subject': getattr(event, 'Subject', None),
             'start': start,
@@ -262,7 +265,7 @@ class BackupReader(config_logger.Logger):
             'organizer': organizer,
             'attendees': attendees,
             'description': getattr(event, 'Body', None),
-            'content_path': getattr(event, 'PathToDataFile', None),
+            'content_path': content_path,
             'id': getattr(event, 'RecordID', None),
             'fallback_subject': getattr(event, 'Topic', None),
             'raw_columns': [],
