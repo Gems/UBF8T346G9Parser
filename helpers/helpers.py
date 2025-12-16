@@ -15,25 +15,26 @@ class Helper:
         return location
 
     @staticmethod
-    def _get_backup_location():
+    def _get_backup_location(quiet: bool = False):
         default = './UBF8T346G9.Office/'
+        if quiet:
+            return default
+
         userinput = input(
             f'Please provide backup folder location [Default: {default}]: ')
-        if userinput:
-            return userinput
-        return default
+        return userinput or default
 
     @staticmethod
-    def _get_profile_data():
+    def _get_profile_data(quiet: bool = False):
         static_path = 'Outlook/Outlook 15 Profiles/{}/Data/'
         default = 'Main Profile'
+        if quiet:
+            return static_path.format(default)
+
         userinput = input(
             f'Please provide user profile [Default: {default}]: ')
-        if userinput:
-            return static_path.format(userinput)
-        return static_path.format(default)
+        return static_path.format(userinput or default)
 
     @classmethod
-    def get_location(cls) -> str:
-        return cls._get_backup_location() + cls._get_profile_data()
-
+    def get_location(cls, quiet: bool = False) -> str:
+        return cls._get_backup_location(quiet=quiet) + cls._get_profile_data(quiet=quiet)
