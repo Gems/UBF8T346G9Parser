@@ -2,7 +2,7 @@ import sqlite3
 import pathlib
 import dataclasses
 import sys
-from typing import Generator, List
+from typing import Generator, List, Optional
 from datetime import datetime
 
 from src.helpers import helpers # type: ignore
@@ -66,14 +66,26 @@ class BackupReader(config_logger.Logger):
         mails = self._get_mails(db_connection)
         return len(list(mails))
 
-    def get_calendar_entries(self) -> List[dict]:
+    def get_calendar_entries(self, folder_ids: Optional[List[int]]=None) -> List[dict]:
         """Extract calendar entries using pyolk's OLK parser for accuracy."""
         self.logger.info('Parsing calendar entries with pyolk')
         olk_reader = _CalendarPyOLKReader(path=self.profile_data_location)
         events = []
         for event in olk_reader.Events.values():
-            events.append(self._map_pyolk_event(event))
+            mapped = self._map_pyolk_event(event)
+            if folder_ids and mapped.get('folder_id') not in folder_ids:
+                continue
+            events.append(mapped)
         return events
+
+    def get_calendar_folders(self) -> List[dict]:
+        """Return calendar folders (FolderClass == 2) with IDs and account UIDs."""
+        cur = self._connect_to_database(self.db_location)
+        rows = cur.execute(
+            "SELECT Record_RecordID AS id, Folder_Name AS name, Record_AccountUID AS account_uid "
+            "FROM Folders WHERE Folder_FolderClass = 2"
+        ).fetchall()
+        return [dict(r) for r in rows]
 
     def _get_info_from_email(self, mail: dict) -> dict:
         return {
@@ -268,6 +280,9 @@ class BackupReader(config_logger.Logger):
             'content_path': content_path,
             'id': getattr(event, 'RecordID', None),
             'fallback_subject': getattr(event, 'Topic', None),
+            'folder_id': getattr(event, 'FolderID', None),
+            'account_uid': getattr(event, 'AccountUID', None),
+            'category_id': getattr(event, 'CategoryID', None),
             'all_day': getattr(event, 'AllDayEvent', None),
             'busy_status': getattr(event, 'BusyStatus', None),
             'is_cancelled': getattr(event, 'IsCancelled', None),

@@ -40,7 +40,54 @@ def _parse_args():
         action='store_true',
         help='Use default backup/profile paths without prompting'
     )
+    parser_cli.add_argument(
+        '--calendar-folders',
+        default=None,
+        help='Comma-separated FolderID list for calendar export; skips prompt when provided'
+    )
     return parser_cli.parse_args()
+
+def _parse_folder_ids(folder_arg: str):
+    try:
+        return [int(v.strip()) for v in folder_arg.split(',') if v.strip()]
+    except ValueError:
+        print('Invalid --calendar-folders value; ignoring and falling back to prompt/default.')
+        return None
+
+def _select_calendar_folders(backupreader_app, quiet: bool, provided_ids=None):
+    folders = backupreader_app.get_calendar_folders()
+    valid_ids = {f.get('id') for f in folders}
+
+    if provided_ids:
+        chosen = [fid for fid in provided_ids if fid in valid_ids]
+        if not chosen:
+            print('No valid FolderIDs from --calendar-folders; exporting all calendars.')
+            return None
+        return chosen
+
+    if quiet or not folders:
+        return None
+
+    print('Available calendars (FolderID : Name [AccountUID]):')
+    for f in folders:
+        name = f.get('name') or '(unnamed calendar)'
+        print(f"  {f.get('id')}: {name} [AccountUID: {f.get('account_uid')}]")
+
+    user_input = input('Enter FolderIDs to export (comma-separated) or leave blank for all: ').strip()
+    if not user_input:
+        return None
+    try:
+        selected = {int(v.strip()) for v in user_input.split(',') if v.strip()}
+    except ValueError:
+        print('Invalid input, exporting all calendars.')
+        return None
+
+    valid_ids = {f.get('id') for f in folders}
+    chosen = list(selected & valid_ids)
+    if not chosen:
+        print('No valid FolderIDs selected, exporting all calendars.')
+        return None
+    return chosen
 
 
 def run():
@@ -74,7 +121,9 @@ def run():
 
     if args.mode in ('all', 'calendar'):
         logger.logger.info('Reading calendar entries')
-        calendar_entries = backupreader_app.get_calendar_entries()
+        provided_ids = _parse_folder_ids(args.calendar_folders) if args.calendar_folders else None
+        folder_ids = _select_calendar_folders(backupreader_app, args.quiet, provided_ids)
+        calendar_entries = backupreader_app.get_calendar_entries(folder_ids=folder_ids)
         if args.ics_output is None:
             calendar_archiver.archive_calendar(calendar_entries)
         else:

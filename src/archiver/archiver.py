@@ -328,6 +328,9 @@ class CalendarArchiver(config_logger.Logger):
         online_link = event.get('online_join_link')
         calendar_owner = event.get('calendar_owner') or 'Unknown'
         uid = event.get('uid') or 'Unknown'
+        folder_id = event.get('folder_id') or 'Unknown'
+        account_uid = event.get('account_uid') or 'Unknown'
+        category_id = event.get('category_id') or 'Unknown'
 
         meta_parts = [
             '<div class="bordermeta">\n',
@@ -338,7 +341,7 @@ class CalendarArchiver(config_logger.Logger):
             f'<p>Attendees: {attendees}</p>\n',
             f'<p>All day: {all_day} | Busy status: {busy_status} | Recurring: {is_recurring} | Cancelled: {is_cancelled}</p>\n',
             f'<p>Attendee count: {attendee_count_text} | Calendar owner: {calendar_owner}</p>\n',
-            f'<p>UID: {uid}</p>\n',
+            f'<p>UID: {uid} | FolderID: {folder_id} | AccountUID: {account_uid} | CategoryID: {category_id}</p>\n',
         ]
         if online_link:
             meta_parts.append(f"<p>Online link: <a href='{online_link}'>{online_link}</a></p>\n")
