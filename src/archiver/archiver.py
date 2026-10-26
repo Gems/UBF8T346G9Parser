@@ -247,10 +247,6 @@ class CalendarArchiver(config_logger.Logger):
             self.logger.warning('icalendar package not installed; skipping ICS export')
             return
 
-        if not events:
-            self.logger.warning('No calendar entries found; skipping ICS export')
-            return
-
         events_sorted = sorted(events, key=lambda e: self._to_timestamp(e.get('start')), reverse=True)
 
         output = pathlib.Path(output_path)
@@ -259,6 +255,7 @@ class CalendarArchiver(config_logger.Logger):
         cal = icalendar.Calendar()
         cal.add('prodid', '-//UBF8T346G9 Parser//ICS Export//EN')
         cal.add('version', '2.0')
+        timezones = {}
 
         for event in events_sorted:
             dt_start = self._coerce_to_datetime(event.get('start'))
@@ -270,6 +267,17 @@ class CalendarArchiver(config_logger.Logger):
             vevent.add('uid', event.get('uid') or str(event.get('id') or id(event)))
             vevent.add('dtstart', dt_start.date() if event.get('all_day') else dt_start)
             vevent.add('dtend', dt_end.date() if event.get('all_day') else dt_end)
+            if event.get('rrule'):
+                vevent.add('rrule', event['rrule'])
+                zone = dt_start.tzinfo
+                if getattr(zone, 'key', None):
+                    timezones[zone.key] = zone
+            for excluded in event.get('exdates', []):
+                vevent.add('exdate', excluded)
+            if isinstance(event.get('recurrence_id'), date):
+                vevent.add('recurrence-id', event['recurrence_id'])
+            if event.get('is_cancelled'):
+                vevent.add('status', 'CANCELLED')
             if event.get('subject'):
                 vevent.add('summary', event.get('subject'))
             body_text = self._strip_tags((event.get('description') or '').strip()) or ''
@@ -303,6 +311,9 @@ class CalendarArchiver(config_logger.Logger):
             if event.get('online_join_link'):
                 vevent.add('url', event.get('online_join_link'))
             cal.add_component(vevent)
+
+        for zone in timezones.values():
+            cal.add_component(icalendar.Timezone.from_tzinfo(zone))
 
         with output.open('wb') as f:
             f.write(cal.to_ical())

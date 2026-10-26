@@ -9,6 +9,7 @@ from src.archiver import archiver
 from src.helpers import helpers
 from src.helpers import progress
 from src.logger import config_logger
+from src.recurrence import filter_future
 
 logger = config_logger.Logger()
 
@@ -101,24 +102,7 @@ def _select_calendar_folders(backupreader_app, quiet: bool, provided_ids=None):
     return chosen
 
 def _filter_future(events, cutoff: datetime):
-    def to_dt(value):
-        if value is None:
-            return None
-        if isinstance(value, datetime):
-            return value.replace(tzinfo=None)
-        if isinstance(value, date):
-            return datetime.combine(value, datetime.min.time())
-        try:
-            return datetime.fromtimestamp(float(value))
-        except Exception:
-            return None
-
-    filtered = []
-    for e in events:
-        end = to_dt(e.get('end')) or to_dt(e.get('start'))
-        if end is None or end >= cutoff:
-            filtered.append(e)
-    return filtered
+    return filter_future(events, cutoff)
 
 
 def run():

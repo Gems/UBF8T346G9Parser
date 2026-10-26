@@ -7,6 +7,7 @@ from datetime import datetime
 
 from src.helpers import helpers # type: ignore
 from src.logger import config_logger #type: ignore
+from src.recurrence import link_overrides, recurrence_fields
 
 def _first_match(row: dict, candidates: List[str]):
     """Return first present value from row based on candidate column names."""
@@ -74,10 +75,10 @@ class BackupReader(config_logger.Logger):
         events = []
         for event in olk_reader.Events.values():
             mapped = self._map_pyolk_event(event)
-            if folder_ids and mapped.get('folder_id') not in folder_ids:
-                continue
             events.append(mapped)
-        return events
+        link_overrides(events)
+        return [event for event in events
+                if not folder_ids or event.get('folder_id') in folder_ids]
 
     def get_calendar_folders(self) -> List[dict]:
         """Return calendar folders (FolderClass == 2) with IDs and account UIDs."""
@@ -288,10 +289,13 @@ class BackupReader(config_logger.Logger):
             'busy_status': getattr(event, 'BusyStatus', None),
             'is_cancelled': getattr(event, 'IsCancelled', None),
             'is_recurring': getattr(event, 'IsRecurring', None),
+            'master_id': getattr(event, 'MasterRecordID', None),
+            'recurrence_id': getattr(event, 'RecurrenceID', None),
             'attendee_count': getattr(event, 'AttendeeCount', None),
             'online_join_link': getattr(event, 'ConferenceHTTPJoinLink', None),
             'calendar_owner': getattr(event, 'CalendarOwnerName', None),
-            'uid': getattr(event, 'ExchangeID', None) or getattr(event, 'MasterRecordID', None),
+            'uid': getattr(event, 'ExchangeID', None) or f'outlook-{event.AccountUID}-{event.RecordID}',
             'raw_columns': [],
             'raw': {},
+            **recurrence_fields(event),
         }
