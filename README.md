@@ -14,3 +14,5 @@ HTML format, so it easily can be browsed with links to files included in emails.
 <h4>Example walkthrough: </h4>
 <code> Insert exerpt from runtime </code>
 
+<h1>Credits</h1>
+Calendar parsing uses [pyolk](https://github.com/hshore29/pyolk) by hshore29.
